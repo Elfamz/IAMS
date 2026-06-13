@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IAMS - Internal Audit Management System</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            navy: { 50: '#f4f6f9', 100: '#e8ecf1', 800: '#001f3f', 900: '#00152b' },
+            greenAccent: '#22c55e',
+          },
+          fontFamily: { sans: ['Inter', 'sans-serif'] }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    body { background-image: radial-gradient(circle at top left, rgba(99,102,241,0.10), transparent 32%), radial-gradient(circle at bottom right, rgba(16,185,129,0.10), transparent 28%); }
+    input, select, textarea { transition: box-shadow 0.25s ease, transform 0.2s ease; border-radius: 1rem; border: 1px solid rgba(148,163,184,0.35); background: rgba(255,255,255,0.92); }
+    input:focus, select:focus, textarea:focus { outline: none; box-shadow: 0 0 0 4px rgba(34,197,94,0.15); transform: translateY(-1px); }
+    button { transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease; }
+    button:hover { transform: translateY(-1px); }
+    .glass-card { background: rgba(255,255,255,0.84); backdrop-filter: blur(18px); border: 1px solid rgba(148,163,184,0.22); }
+    .glass-panel { background: rgba(15,23,42,0.86); backdrop-filter: blur(16px); border: 1px solid rgba(148,163,184,0.16); }
+    .sidebar-frost { background: rgba(15,23,42,0.95); backdrop-filter: blur(18px); }
+    .hover-glow:hover { box-shadow: 0 20px 50px rgba(15,23,42,0.12); }
+
+    @media print {
+      .print-hide { display: none !important; }
+      body { background: white !important; color: black !important; }
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 text-gray-900 dark:text-gray-100 transition-colors duration-300">
+
+  <div id="root"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.4/babel.min.js" crossorigin></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    class ErrorBoundary extends React.Component {
+      constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+      static getDerivedStateFromError(error) { return { hasError: true, error }; }
+      render() {
+        if (this.state.hasError) {
+          return (
+            <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-8 text-center">
+              <i className="fa-solid fa-triangle-exclamation text-red-500 text-3xl mb-3"></i>
+              <h2 className="text-xl font-bold">Terjadi Kesalahan Browser (Render Crash)</h2>
+              <p className="text-xs text-slate-400 mt-2 max-w-md">{this.state.error?.toString()}</p>
+              <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="mt-4 px-4 py-2 bg-greenAccent text-slate-950 font-bold rounded-xl text-xs">Reset Aplikasi</button>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    const parseSafeDate = (dateStr) => {
+      if (!dateStr) return "";
+      try {
+        const cleanStr = String(dateStr).trim().replace(/-/g, "/");
+        const parsedDate = new Date(cleanStr);
+        if (isNaN(parsedDate.getTime())) return String(dateStr);
+        const y = parsedDate.getFullYear();
+        const m = String(parsedDate.getMonth() + 1).padStart(2, '0');
+        const d = String(parsedDate.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      } catch (err) { return String(dateStr); }
+    };
+
+    const applyAutoColumnWidths = (worksheet) => {
+      worksheet.columns.forEach(column => {
+        let maxColumnLength = 0;
+        column.eachCell({ includeEmpty: true }, cell => {
+          const cellValue = cell.value ? cell.value.toString() : '';
+          if (cellValue.length > maxColumnLength) { maxColumnLength = cellValue.length; }
+        });
+        column.width = maxColumnLength < 12 ? 12 : maxColumnLength + 3;
+      });
+    };
+
+    const getAlertStyles = (status) => {
+      const cleanStatus = status ? status.toString().trim() : '';
+      if (cleanStatus === 'Closed') {
+        return {
+          fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1FAE5' } },
+          font: { name: 'Segoe UI', size: 9, bold: true, color: { argb: 'FF065F46' } }
+        };
+      }
+      return {
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE11D48' } },
+        font: { name: 'Segoe UI', size: 9, bold: true, color: { argb: 'FFFFFFFF' } }
+      };
+    };
+
+    const DEFAULT_DATA = {
+      Users: [
+        { ID: "USR-01", Email: "admin@iams.com", Role: "Admin", Nama: "Super Admin" },
+        { ID: "USR-02", Email: "trianto@iams.com", Role: "Auditor", Nama: "Trianto" }
+      ],
+      Audits: [
+        { "Nomor Audit": "AUD-202606-0001", "Tanggal Audit": "2026-06-01", "Auditor ID": "Trianto", "Outlet ID": "JCHICKEN CILEDUG", "Kesimpulan Audit": "Perlu tindak lanjut cepat.", "Status Audit": "Approved" }
+      ],
+      Findings: [
+        { "ID Temuan": "TMN-202606-0001", "Nomor Audit": "AUD-202606-0001", Tanggal: "2026-06-01", Outlet: "JCHICKEN CILEDUG", Auditor: "Trianto", "Jenis Audit": "Cash Opname", "Deskripsi Temuan": "Minus kas sebesar Rp 500.000,-", "Kategori Risiko": "High", PIC: "Budi Santoso", Deadline: "2026-06-10", Status: "Open", Photos: "" }
+      ],
+      Followups: [
+        { "ID Temuan": "TMN-202606-0001", "Action Plan": "Penyelesaian selisih dari dana operasional", Progress: 50, "Upload Bukti Perbaikan": "", "Catatan Auditor": "", "Status Verifikasi": "Pending" }
+      ],
+      MasterAuditors: [{ ID: "1", "Nama Auditor": "Trianto" }, { ID: "2", "Nama Auditor": "Ilyas" }],
+      MasterOutlets: [{ ID: "OUT-01", "Nama Outlet": "JCHICKEN CILEDUG" }, { ID: "OUT-02", "Nama Outlet": "MOMOYO" }],
+      MasterJenisAudit: [{ ID: "TP-01", "Nama Jenis Audit": "Cash Opname" }, { ID: "TP-02", "Nama Jenis Audit": "Stock Opname" }],
+      TargetHariKerja: 22
+    };
+
+    function App() {
+      const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('iams_logged_user'));
+      const [user, setUser] = useState(() => JSON.parse(localStorage.getItem('iams_logged_user') || 'null'));
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [darkMode, setDarkMode] = useState(() => localStorage.getItem('iams_theme') === 'dark');
+      const [sidebarOpen, setSidebarOpen] = useState(true);
+
+      const [appData, setAppData] = useState(DEFAULT_DATA);
+      const [loading, setLoading] = useState(false);
+      const [errorMsg, setErrorMsg] = useState("");
+      const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
+
+      const [weeklyStartDate, setWeeklyStartDate] = useState('');
+      const [weeklyEndDate, setWeeklyEndDate] = useState('');
+      const [lpjStartDate, setLpjStartDate] = useState('');
+      const [lpjEndDate, setLpjEndDate] = useState('');
+
+      const [newUserId, setNewUserId] = useState('');
+      const [newUserEmail, setNewUserEmail] = useState('');
+      const [newUserPassword, setNewUserPassword] = useState('');
+      const [newUserNama, setNewUserNama] = useState('');
+      const [newUserRole, setNewUserRole] = useState('Auditor');
+
+      const [newOutletId, setNewOutletId] = useState('');
+      const [newOutletName, setNewOutletName] = useState('');
+      const [newScopeId, setNewScopeId] = useState('');
+      const [newScopeName, setNewScopeName] = useState('');
+
+      // AMAN: Deklarasi State Penuh Log Ekspor (Mencegah ReferenceError)
+      const [exportHistory, setExportHistory] = useState(() => JSON.parse(localStorage.getItem('iams_export_history') || '[]'));
+      const [historySearch, setHistorySearch] = useState('');
+
+      const doughnutChartRef = useRef(null);
+      const barChartRef = useRef(null);
+      const doughnutChartInstance = useRef(null);
+      const barChartInstance = useRef(null);
+
+      const [loginEmail, setLoginEmail] = useState('');
+      const [loginPassword, setLoginPassword] = useState('');
+      
+      const [newAudit, setNewAudit] = useState({ tanggal: new Date().toISOString().split('T')[0], auditor: 'Trianto', outlet: 'JCHICKEN CILEDUG', kesimpulan: '', status: 'Draft' });
+      const [tempFindings, setTempFindings] = useState([{ uid: Date.now(), jenis: 'Cash Opname', deskripsi: '', risiko: 'Medium', pic: '', deadline: new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0], photos: '' }]);
+
+      const [selectedLhpOutlet, setSelectedLhpOutlet] = useState('JCHICKEN CILEDUG');
+      const [lhpStartDate, setLhpStartDate] = useState('');
+      const [lhpEndDate, setLhpEndDate] = useState('');
+      
+      const [selectedLhpAuditor, setSelectedLhpAuditor] = useState('Trianto');
+      const [generatedLpj, setGeneratedLpj] = useState(null);
+
+      const [selectedFollowup, setSelectedFollowup] = useState(null);
+      const [followupForm, setFollowupForm] = useState({ actionPlan: '', progress: 0, buktiPerbaikan: '', catatanAuditor: '', statusVerifikasi: 'Pending' });
+
+      const [findingFilters, setFindingFilters] = useState({ search: '', outlet: 'All', auditor: 'All', risiko: 'All', status: 'All' });
+      const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+
+      const showToast = (message, type = 'info') => {
+        setToast({ show: true, message, type });
+        setTimeout(() => setToast({ show: false, message: '', type: 'info' }), 4000);
+      };
+
+      const triggerPrint = () => window.print();
+
+      const handleTabChange = (tabName) => {
+        setActiveTab(tabName);
+        if (window.innerWidth < 1024) setSidebarOpen(false);
+      };
+
+      const handleDashboardCardClick = (targetType, statusValue) => {
+        setFindingFilters(prev => ({ ...prev, search: '', outlet: 'All', auditor: 'All', risiko: targetType === 'risiko' ? statusValue : 'All', status: targetType === 'status' ? statusValue : 'All' }));
+        handleTabChange('findings');
+        showToast(`Menampilkan temuan dengan status "${statusValue}"`, "info");
+      };
+
+      useEffect(() => {
+        if (darkMode) document.documentElement.classList.add('dark');
+        else document.documentElement.classList.remove('dark');
+      }, [darkMode]);
+
+      const refreshData = () => {
+        setLoading(true);
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler((data) => {
+              if (data) {
+                const parsed = {
+                  Users: data.Users || [], Audits: data.Audits || [],
+                  Findings: (data.Findings || []).map(f => ({ ...f, Tanggal: parseSafeDate(f.Tanggal), Deadline: parseSafeDate(f.Deadline) })),
+                  Followups: data.Followups || [], MasterAuditors: data.MasterAuditors || [],
+                  MasterOutlets: data.MasterOutlets || [], MasterJenisAudit: data.MasterJenisAudit || [], TargetHariKerja: data.TargetHariKerja || 22
+                };
+                setAppData(parsed);
+                localStorage.setItem('iams_offline_db', JSON.stringify(parsed));
+              }
+              setLoading(false);
+            })
+            .withFailureHandler(() => { loadLocalDatabase(); })
+            .getAppData(user?.id, user?.role);
+        } else { loadLocalDatabase(); }
+      };
+
+      const loadLocalDatabase = () => {
+        setTimeout(() => {
+          const cached = localStorage.getItem('iams_offline_db');
+          if (cached) { setAppData(JSON.parse(cached)); } 
+          else { setAppData(DEFAULT_DATA); localStorage.setItem('iams_offline_db', JSON.stringify(DEFAULT_DATA)); }
+          setLoading(false);
+        }, 400);
+      };
+
+      useEffect(() => { refreshData(); }, [isLoggedIn]);
+
+      const appMetrics = useMemo(() => {
+        const findings = appData.Findings || [];
+        const audits = appData.Audits || [];
+        return {
+          total: findings.length,
+          open: findings.filter(f => f.Status === 'Open').length,
+          progress: findings.filter(f => f.Status === 'Progress').length,
+          closed: findings.filter(f => f.Status === 'Closed').length,
+          overdue: findings.filter(f => f.Status === 'Overdue').length,
+          skorKPI: findings.length > 0 ? Math.round((findings.filter(f => f.Status === 'Closed').length / findings.length) * 100) : 100,
+          targetHariKerja: appData.TargetHariKerja || 22,
+          realisasiPemeriksaan: audits.length
+        };
+      }, [appData]);
+
+      const kpiAuditors = useMemo(() => {
+        const target = appData.TargetHariKerja || 22;
+        return ['Trianto', 'Ilyas'].map(name => {
+          const pAudits = (appData.Audits || []).filter(a => a["Auditor ID"] === name);
+          const pFindings = (appData.Findings || []).filter(f => f.Auditor === name);
+          return {
+            name, target, realisasi: pAudits.length,
+            percentage: Math.min(100, Math.round((pAudits.length / target) * 100)),
+            findings: pFindings.length, closed: pFindings.filter(f => f.Status === "Closed").length,
+            closingRate: pFindings.length > 0 ? Math.round((pFindings.filter(f => f.Status === "Closed").length / pFindings.length) * 100) : 0
+          };
+        });
+      }, [appData]);
+
+      const rankingOutlets = useMemo(() => {
+        return (appData.MasterOutlets || []).map(o => {
+          const f = (appData.Findings || []).filter(item => item.Outlet === o["Nama Outlet"]);
+          return { outlet: o["Nama Outlet"], total: f.length };
+        }).sort((a,b) => b.total - a.total);
+      }, [appData]);
+
+      const filteredLhpFindings = useMemo(() => {
+        return (appData.Findings || []).filter(f => {
+          if (f.Outlet !== selectedLhpOutlet) return false;
+          if (!lhpStartDate && !lhpEndDate) return true;
+          const itemTime = new Date(f.Tanggal).setHours(0,0,0,0);
+          if (lhpStartDate && lhpEndDate) return itemTime >= new Date(lhpStartDate).setHours(0,0,0,0) && itemTime <= new Date(lhpEndDate).setHours(0,0,0,0);
+          return lhpStartDate ? itemTime >= new Date(lhpStartDate).setHours(0,0,0,0) : itemTime <= new Date(lhpEndDate).setHours(0,0,0,0);
+        });
+      }, [appData.Findings, selectedLhpOutlet, lhpStartDate, lhpEndDate]);
+
+      const lhpDateRangeLabel = useMemo(() => {
+        if (!lhpStartDate && !lhpEndDate) return 'Seluruh Periode';
+        return lhpStartDate && lhpEndDate ? `${lhpStartDate} s/d ${lhpEndDate}` : (lhpStartDate ? `Mulai ${lhpStartDate}` : `Sampai ${lhpEndDate}`);
+      }, [lhpStartDate, lhpEndDate]);
+
+      const lpjDateRangeLabel = useMemo(() => {
+        if (!lpjStartDate && !lpjEndDate) return 'Seluruh Periode';
+        return lpjStartDate && lpjEndDate ? `${lpjStartDate} s/d ${lpjEndDate}` : (lpjStartDate ? `Mulai ${lpjStartDate}` : `Sampai ${lpjEndDate}`);
+      }, [lpjStartDate, lpjEndDate]);
+
+      // MANAGEMENT UPGRADE: Pengklusteran Multi-Dimensi Data Gabungan untuk Tab LPJ Eksekutif
+      const lpjGroupedData = useMemo(() => {
+        let sourceFindings = appData.Findings || [];
+        let sourceFollowups = appData.Followups || [];
+
+        if (lpjStartDate || lpjEndDate) {
+          sourceFindings = sourceFindings.filter(f => {
+            if (!f.Tanggal) return false;
+            const t = new Date(f.Tanggal).setHours(0,0,0,0);
+            const start = lpjStartDate ? new Date(lpjStartDate).setHours(0,0,0,0) : null;
+            const end = lpjEndDate ? new Date(lpjEndDate).setHours(0,0,0,0) : null;
+            if (start && end) return t >= start && t <= end;
+            return start ? t >= start : t <= end;
+          });
+        }
+
+        const map = {};
+        sourceFindings.forEach(f => {
+          const out = f.Outlet;
+          if (!map[out]) map[out] = [];
+          
+          const fp = sourceFollowups.find(fol => fol["ID Temuan"] === f["ID Temuan"]) || {};
+          map[out].push({
+            id: f["ID Temuan"],
+            tanggal: f.Tanggal,
+            ruangLingkup: f["Jenis Audit"],
+            deskripsi: f["Deskripsi Temuan"],
+            actionPlan: fp["Action Plan"] || "Belum ada respon rencana perbaikan.",
+            status: f.Status
+          });
+        });
+        return map;
+      }, [appData.Findings, appData.Followups, lpjStartDate, lpjEndDate]);
+
+      const generateWeeklyReport = () => {
+        setLoading(true);
+        setTimeout(() => {
+          let tAudits = 0, tFindings = 0, op = 0, cl = 0, prg = 0, ovr = 0;
+          
+          Object.keys(lpjGroupedData).forEach(out => {
+            if(lpjGroupedData[out].length > 0) tAudits++;
+            lpjGroupedData[out].forEach(f => {
+              tFindings++;
+              if(f.status === 'Open') op++;
+              else if(f.status === 'Closed') cl++;
+              else if(f.status === 'Progress') prg++;
+              else if(f.status === 'Overdue') ovr++;
+            });
+          });
+
+          setGeneratedLpj({
+            periode: lpjDateRangeLabel,
+            summary: { totalAudit: tAudits, totalFindings: tFindings, open: op, closed: cl, progress: prg, overdue: ovr, closingRate: tFindings > 0 ? Math.round((cl/tFindings)*100) : 0 }
+          });
+          showToast("Analisis Kluster Sukses Terkompilasi!", "success");
+          setLoading(false);
+        }, 300);
+      };
+
+      const exportWeeklyLpjExcel = async () => {
+        if (!generatedLpj) return;
+        setLoading(true);
+        try {
+          const wb = new ExcelJS.Workbook();
+          const ws = wb.addWorksheet('Rekap LPJ Manajemen');
+          ws.views = [{ showGridLines: true }];
+
+          createExcelHeader(ws, `LAPORAN PERTANGGUNGJAWABAN (LPJ) AUDIT KORPORAT`, `Format Pengelompokan Tingkat Kepatuhan Cabang`);
+
+          const headers = ["Nama Cabang Outlet", "Tanggal Temuan", "Ruang Lingkup", "Deskripsi Temuan Masalah", "Action Plan Perbaikan", "Status"];
+          const headRow = ws.addRow(headers);
+          ws.getRow(5).height = 24;
+          headRow.eachCell(c => {
+            c.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '001F3F' } };
+            c.alignment = { vertical: 'middle', horizontal: 'center' };
+          });
+
+          let cursor = 6;
+          const borderStyle = {
+            top: { style: 'thin', color: { argb: 'D1D5DB' } }, left: { style: 'thin', color: { argb: 'D1D5DB' } },
+            bottom: { style: 'thin', color: { argb: 'D1D5DB' } }, right: { style: 'thin', color: { argb: 'D1D5DB' } }
+          };
+
+          Object.keys(lpjGroupedData).forEach(outlet => {
+            const list = lpjGroupedData[outlet];
+            if (list.length === 0) return;
+
+            const startMergeRow = cursor;
+            list.forEach((f) => {
+              const r = ws.addRow([outlet, f.tanggal, f.ruangLingkup, f.deskripsi, f.actionPlan, f.status]);
+              r.height = 20;
+              r.eachCell((cell, colNum) => {
+                cell.border = borderStyle;
+                cell.alignment = { vertical: 'middle' };
+                if(colNum === 1 || colNum === 2 || colNum === 6) cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                if(colNum === 6) {
+                  const st = getAlertStyles(f.status);
+                  cell.fill = st.fill; cell.font = st.font;
+                }
+              });
+              cursor++;
+            });
+
+            if (list.length > 1) {
+              ws.mergeCells(`A${startMergeRow}:A${cursor - 1}`);
+            }
+          });
+
+          applyAutoColumnWidths(ws);
+          const buffer = await wb.xlsx.writeBuffer();
+          saveAs(new Blob([buffer]), `IAMS_LPJ_Executive_Report_${Date.now()}.xlsx`);
+          logExportActivity('LPJ Executive Excel', generatedLpj.periode);
+          showToast("Berkas Dokumen Sukses Terunduh!", "success");
+        } catch (e) { showToast("Excel Engine Error: " + e.message, "error"); }
+        finally { setLoading(false); }
+      };
+
+      // AMAN: Pengembalian Utuh Fungsi Manajemen Sesi & Log History Terlewat
+      const handleLogout = () => {
+        setIsLoggedIn(false);
+        setUser(null);
+        localStorage.removeItem('iams_logged_user');
+        showToast("Sesi berhasil diakhiri.", "info");
+      };
+
+      const logExportActivity = (type, details) => {
+        const log = { 
+          id: 'EXP-' + Date.now(), 
+          timestamp: new Date().toLocaleString('id-ID'), 
+          type, 
+          details, 
+          operator: user ? user.name : "System" 
+        };
+        setExportHistory(prev => { 
+          const n = [log, ...prev]; 
+          localStorage.setItem('iams_export_history', JSON.stringify(n)); 
+          return n; 
+        });
+      };
+
+      const clearAllExportHistory = () => {
+        if (window.confirm("Apakah Anda yakin menghapus seluruh log riwayat export?")) {
+          setExportHistory([]); 
+          localStorage.removeItem('iams_export_history');
+          showToast("Seluruh log riwayat export berhasil dibersihkan", "success");
+        }
+      };
+
+      const filteredHistoryLogs = useMemo(() => {
+        return (exportHistory || []).filter(log => {
+          if (!historySearch) return true;
+          return log.details.toLowerCase().includes(historySearch.toLowerCase()) || 
+                 log.type.toLowerCase().includes(historySearch.toLowerCase());
+        });
+      }, [exportHistory, historySearch]);
+
+      const filteredFindings = useMemo(() => {
+        let list = appData.Findings || [];
+        if (findingFilters.outlet !== 'All') list = list.filter(f => f.Outlet === findingFilters.outlet);
+        if (findingFilters.status !== 'All') list = list.filter(f => f.Status === findingFilters.status);
+        if (findingFilters.search) {
+          const s = findingFilters.search.toLowerCase();
+          list = list.filter(f => f["ID Temuan"].toLowerCase().includes(s) || f["Deskripsi Temuan"].toLowerCase().includes(s));
+        }
+        return list;
+      }, [appData.Findings, findingFilters]);
+
+      useEffect(() => {
+        if (activeTab === 'dashboard' && appData.Findings.length > 0 && doughnutChartRef.current && barChartRef.current) {
+          try {
+            if (doughnutChartInstance.current) doughnutChartInstance.current.destroy();
+            if (barChartInstance.current) barChartInstance.current.destroy();
+
+            doughnutChartInstance.current = new Chart(doughnutChartRef.current.getContext('2d'), {
+              type: 'doughnut',
+              data: {
+                labels: ['Open', 'Progress', 'Closed', 'Overdue'],
+                datasets: [{ data: [appMetrics.open, appMetrics.progress, appMetrics.closed, appMetrics.overdue], backgroundColor: ['#f43f5e', '#eab308', '#22c55e', '#6366f1'] }]
+              },
+              options: { responsive: true, maintainAspectRatio: false, cutout: '75%' }
+            });
+
+            barChartInstance.current = new Chart(barChartRef.current.getContext('2d'), {
+              type: 'bar',
+              data: { labels: rankingOutlets.map(r => r.outlet.split(' ')[0]), datasets: [{ data: rankingOutlets.map(r => r.total), backgroundColor: '#001f3f' }] },
+              options: { responsive: true, maintainAspectRatio: false }
+            });
+          } catch(e) {}
+        }
+      }, [activeTab, appData, appMetrics, rankingOutlets]);
+
+      const handleLogin = (e) => {
+        e.preventDefault(); setLoading(true);
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler((res) => {
+              if (res.success) { setUser(res.user); setIsLoggedIn(true); localStorage.setItem('iams_logged_user', JSON.stringify(res.user)); } 
+              else setErrorMsg(res.message);
+              setLoading(false);
+            }).loginUser(loginEmail, loginPassword);
+        } else {
+          if (loginEmail === "admin@iams.com" && loginPassword === "admin123") {
+            const mu = { id: "USR-01", name: "Super Admin", role: "Admin", email: loginEmail };
+            setUser(mu); setIsLoggedIn(true); localStorage.setItem('iams_logged_user', JSON.stringify(mu));
+          } else { setErrorMsg("Kredensial salah."); }
+          setLoading(false);
+        }
+      };
+
+      const handleFileUpload = (e, index, targetForm) => {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+          if (typeof google !== 'undefined' && google.script && google.script.run) {
+            google.script.run
+              .withSuccessHandler((res) => {
+                if (res.success) {
+                  if (targetForm === 'newAuditFinding') { const u = [...tempFindings]; u[index].photos = res.url; setTempFindings(u); }
+                  showToast("File lampiran berhasil terunggah!", "success");
+                }
+              }).uploadToDrive(evt.target.result, file.name);
+          }
+        };
+        reader.readAsDataURL(file);
+      };
+
+      const submitAuditForm = (e) => {
+        e.preventDefault(); setLoading(true);
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler((res) => {
+              if (res.success) { showToast("Audit Berhasil Tersimpan!", "success"); resetAuditForm(); refreshData(); handleTabChange('findings'); }
+              setLoading(false);
+            }).saveAuditWithFindings(newAudit, tempFindings);
+        } else {
+          showToast("Simulator Mode: Audit Tersimpan", "success");
+          setLoading(false);
+          handleTabChange('findings');
+        }
+      };
+
+      const resetAuditForm = () => {
+        setNewAudit({ tanggal: new Date().toISOString().split('T')[0], auditor: 'Trianto', outlet: 'JCHICKEN CILEDUG', kesimpulan: '', status: 'Draft' });
+        setTempFindings([{ uid: Date.now(), jenis: 'Cash Opname', deskripsi: '', risiko: 'Medium', pic: '', deadline: new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0], photos: '' }]);
+      };
+
+      const handleFollowupSubmit = (e) => {
+        e.preventDefault(); setLoading(true);
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler((res) => { if (res.success) { showToast("Solusi Dikirim!", "success"); setSelectedFollowup(null); refreshData(); } setLoading(false); })
+            .submitFollowup({ idTemuan: selectedFollowup["ID Temuan"], ...followupForm });
+        }
+      };
+
+      const openFollowupModal = (finding) => {
+        setSelectedFollowup(finding);
+        const match = appData.Followups.find(f => f["ID Temuan"] === finding["ID Temuan"]) || {};
+        setFollowupForm({ actionPlan: match["Action Plan"] || "", progress: match["Progress"] || 0, buktiPerbaikan: match["Upload Bukti Perbaikan"] || "", catatanAuditor: match["Catatan Auditor"] || "", statusVerifikasi: match["Status Verifikasi"] || "Pending" });
+      };
+
+      const updateFindingStatus = (findingId, newStatus) => {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler(() => { showToast("Status Terupdate", "success"); refreshData(); }).updateFindingStatus(findingId, newStatus);
+        }
+      };
+
+      const createExcelHeader = (worksheet, title, sub) => {
+        worksheet.mergeCells('A1:F1');
+        worksheet.getCell('A1').value = title;
+        worksheet.getCell('A1').font = { name: 'Segoe UI', size: 14, bold: true, color: { argb: '001F3F' } };
+        worksheet.mergeCells('A2:F2');
+        worksheet.getCell('A2').value = `${sub} | Penanggung Jawab: Elvan Gunawan`;
+        worksheet.getCell('A2').font = { name: 'Segoe UI', size: 9, italic: true, color: { argb: '64748B' } };
+      };
+
+      const addTempFindingRow = () => {
+        setTempFindings(prev => [...prev, { uid: Date.now() + Math.round(Math.random()*1000), jenis: 'Cash Opname', deskripsi: '', risiko: 'Medium', pic: '', deadline: new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0], photos: '' }]);
+      };
+
+      if (!isLoggedIn) {
+        return (
+          <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-12 px-4 text-center">
+            <div className="max-w-md w-full mx-auto bg-slate-800/50 p-8 rounded-3xl border border-slate-700 backdrop-blur-md">
+              <h2 className="text-xl font-black text-white tracking-widest uppercase mb-4">IAMS PORTAL</h2>
+              <form onSubmit={handleLogin} className="space-y-3 text-left text-xs">
+                <div><label className="block text-slate-400 mb-1">Email</label><input type="email" required value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} className="w-full p-2.5 bg-slate-950 border border-slate-700 text-white" /></div>
+                <div><label className="block text-slate-400 mb-1">Password</label><input type="password" required value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} className="w-full p-2.5 bg-slate-950 border border-slate-700 text-white" /></div>
+                <button type="submit" className="w-full py-3 bg-greenAccent text-slate-950 font-bold uppercase tracking-wider rounded-xl">Otentikasi</button>
+              </form>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen flex bg-slate-100 dark:bg-slate-950">
+          <aside className="print-hide w-64 bg-slate-900 text-slate-300 p-4 flex flex-col justify-between">
+            <div className="space-y-4">
+              <div className="border-b border-slate-700 pb-3"><h2 className="text-white font-black text-sm tracking-widest">IAMS ERP</h2><p className="text-[9px] uppercase text-greenAccent">Coordinator View</p></div>
+              <nav className="space-y-1 text-xs font-bold">
+                <button onClick={()=>setActiveTab('dashboard')} className={`w-full text-left p-2.5 rounded-xl ${activeTab==='dashboard'?'bg-indigo-600 text-white':''}`}><i className="fa-solid fa-chart-line mr-2"></i>Dashboard</button>
+                <button onClick={()=>setActiveTab('new_audit')} className={`w-full text-left p-2.5 rounded-xl ${activeTab==='new_audit'?'bg-indigo-600 text-white':''}`}><i className="fa-solid fa-file-circle-plus mr-2"></i>Input Audit</button>
+                <button onClick={()=>setActiveTab('findings')} className={`w-full text-left p-2.5 rounded-xl ${activeTab==='findings'?'bg-indigo-600 text-white':''}`}><i className="fa-solid fa-list-check mr-2"></i>Review Temuan</button>
+                <button onClick={()=>setActiveTab('lhp')} className={`w-full text-left p-2.5 rounded-xl ${activeTab==='lhp'?'bg-indigo-600 text-white':''}`}><i className="fa-solid fa-file-invoice mr-2"></i>LHP Gen</button>
+                <button onClick={()=>setActiveTab('lpj')} className={`w-full text-left p-2.5 rounded-xl ${activeTab==='lpj'?'bg-indigo-600 text-white':''}`}><i className="fa-solid fa-clipboard-check mr-2"></i>LPJ Manajemen</button>
+                <button onClick={()=>setActiveTab('history')} className={`w-full text-left p-2.5 rounded-xl ${activeTab==='history'?'bg-indigo-600 text-white':''}`}><i className="fa-solid fa-clock-rotate-left mr-2"></i>Log Ekspor</button>
+              </nav>
+            </div>
+            <button onClick={handleLogout} className="text-left text-xs font-bold text-red-400 p-2 hover:bg-red-500/10 rounded-xl"><i className="fa-solid fa-right-from-bracket mr-2"></i>Keluar</button>
+          </aside>
+
+          <div className="flex-1 flex flex-col overflow-x-hidden">
+            <header className="print-hide h-14 bg-white dark:bg-slate-900 border-b px-6 flex items-center justify-between shadow-sm">
+              <h3 className="text-xs font-black uppercase text-slate-400 tracking-widest">{activeTab}</h3>
+              <div className="flex items-center gap-3 text-xs font-bold"><span>Hi, Elvan Gunawan</span><button onClick={refreshData} className="p-1.5 bg-slate-100 rounded-lg"><i className="fa-solid fa-arrows-rotate"></i></button></div>
+            </header>
+
+            <main className="p-6 flex-1 max-w-7xl w-full mx-auto">
+              {activeTab === 'dashboard' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div onClick={()=>handleDashboardCardClick('status','Open')} className="bg-white p-4 rounded-2xl border shadow-sm cursor-pointer"><p className="text-[10px] text-slate-400 font-bold uppercase">Open Case</p><p className="text-xl font-black text-red-500">{appMetrics.open}</p></div>
+                    <div onClick={()=>handleDashboardCardClick('status','Progress')} className="bg-white p-4 rounded-2xl border shadow-sm cursor-pointer"><p className="text-[10px] text-slate-400 font-bold uppercase">On Progress</p><p className="text-xl font-black text-amber-500">{appMetrics.progress}</p></div>
+                    <div onClick={()=>handleDashboardCardClick('status','Closed')} className="bg-white p-4 rounded-2xl border shadow-sm cursor-pointer"><p className="text-[10px] text-slate-400 font-bold uppercase">Closed Case</p><p className="text-xl font-black text-green-500">{appMetrics.closed}</p></div>
+                    <div className="bg-slate-900 p-4 rounded-2xl text-white"><p className="text-[10px] text-slate-400 font-bold uppercase">Closing Rate</p><p className="text-xl font-black text-greenAccent">{appMetrics.skorKPI}%</p></div>
+                  </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div className="bg-white p-4 rounded-2xl border h-56 relative"><canvas ref={doughnutChartRef}></canvas></div>
+                    <div className="bg-white p-4 rounded-2xl border h-56 lg:col-span-2"><canvas ref={barChartRef}></canvas></div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'new_audit' && (
+                <div className="bg-white p-4 rounded-2xl border shadow-sm text-xs">
+                  <h3 className="font-bold mb-3 text-slate-400 uppercase">Penerbitan Berita Acara</h3>
+                  <form onSubmit={submitAuditForm} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div><label className="block mb-1 text-slate-400">Tanggal Audit</label><input type="date" required value={newAudit.tanggal} onChange={e=>setNewAudit({...newAudit, tanggal:e.target.value})} className="w-full p-2 border" /></div>
+                      <div><label className="block mb-1 text-slate-400">Auditor</label><select value={newAudit.auditor} onChange={e=>setNewAudit({...newAudit, auditor:e.target.value})} className="w-full p-2 border">{(appData.MasterAuditors||[]).map(a=><option key={a.ID} value={a["Nama Auditor"]}>{a["Nama Auditor"]}</option>)}</select></div>
+                      <div><label className="block mb-1 text-slate-400">Outlet</label><select value={newAudit.outlet} onChange={e=>setNewAudit({...newAudit, outlet:e.target.value})} className="w-full p-2 border">{(appData.MasterOutlets||[]).map(o=><option key={o.ID} value={o["Nama Outlet"]}>{o["Nama Outlet"]}</option>)}</select></div>
+                    </div>
+                    <div><label className="block mb-1 text-slate-400">Kesimpulan Lapangan</label><input type="text" required value={newAudit.kesimpulan} onChange={e=>setNewAudit({...newAudit, kesimpulan:e.target.value})} className="w-full p-2 border" /></div>
+                    
+                    <div className="border-t pt-3">
+                      <div className="flex justify-between items-center mb-2"><h4 className="font-bold text-slate-400 uppercase text-[10px]">Temuan Pelanggaran</h4><button type="button" onClick={addTempFindingRow} className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded font-bold">+ Baris</button></div>
+                      <div className="space-y-2">
+                        {tempFindings.map((row, index) => (
+                          <div key={row.uid || index} className="p-3 bg-slate-50 border rounded-xl flex flex-wrap gap-2 items-end">
+                            <div className="flex-1 min-w-[140px]"><label className="block text-[9px] mb-0.5">Ruang Lingkup</label><select value={row.jenis} onChange={e=>{const n=[...tempFindings]; n[index].jenis=e.target.value; setTempFindings(n);}} className="w-full p-1.5 bg-white border text-xs">{(appData.MasterJenisAudit||[]).map(t=><option key={t.ID} value={t["Nama Jenis Audit"]}>{t["Nama Jenis Audit"]}</option>)}</select></div>
+                            <div className="flex-1 min-w-[180px]"><label className="block text-[9px] mb-0.5">Deskripsi Temuan</label><input type="text" required value={row.deskripsi} onChange={e=>{const n=[...tempFindings]; n[index].deskripsi=e.target.value; setTempFindings(n);}} className="w-full p-1.5 bg-white border text-xs" /></div>
+                            <div className="w-24"><label className="block text-[9px] mb-0.5">Risiko</label><select value={row.risiko} onChange={e=>{const n=[...tempFindings]; n[index].risiko=e.target.value; setTempFindings(n);}} className="w-full p-1.5 bg-white border text-xs"><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option></select></div>
+                            <div className="w-28"><label className="block text-[9px] mb-0.5">PIC</label><input type="text" required value={row.pic} onChange={e=>{const n=[...tempFindings]; n[index].pic=e.target.value; setTempFindings(n);}} className="w-full p-1.5 bg-white border text-xs" /></div>
+                            <div className="w-28"><label className="block text-[9px] mb-0.5">Deadline</label><input type="date" required min={newAudit.tanggal} value={row.deadline} onChange={e=>{const n=[...tempFindings]; n[index].deadline=e.target.value; setTempFindings(n);}} className="w-full p-1.5 bg-white border text-xs" /></div>
+                            <div className="w-24"><label className="block text-[9px] mb-0.5">Bukti Foto</label><input type="file" onChange={e=>handleFileUpload(e, index, 'newAuditFinding')} className="w-full text-[10px]" /></div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <button type="submit" className="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl flex ml-auto">Simpan Berita Acara</button>
+                  </form>
+                </div>
+              )}
+
+              {activeTab === 'findings' && (
+                <div className="space-y-4 text-xs">
+                  <div className="bg-white p-4 rounded-2xl border flex gap-2">
+                    <input type="text" placeholder="Cari kasus..." value={findingFilters.search} onChange={e=>setFindingFilters({...findingFilters, search:e.target.value})} className="p-2 border rounded-xl flex-1" />
+                    <select value={findingFilters.status} onChange={e=>setFindingFilters({...findingFilters, status:e.target.value})} className="p-2 border rounded-xl"><option value="All">Semua Status</option><option value="Open">Open</option><option value="Progress">Progress</option><option value="Closed">Closed</option></select>
+                  </div>
+                  <div className="bg-white rounded-2xl border overflow-hidden">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50 border-b text-slate-400 font-bold uppercase"><tr className="text-[10px]"><th className="p-3">ID Case</th><th className="p-3">Outlet</th><th className="p-3">Uraian Ketidaksesuaian</th><th className="p-3">PIC / Target</th><th className="p-3 text-center">Status</th><th className="p-3 text-center">Intervensi</th></tr></thead>
+                      <tbody>
+                        {filteredFindings.map(f => (
+                          <tr key={f["ID Temuan"]} className="border-b last:border-0 hover:bg-slate-50/50">
+                            <td className="p-3 font-bold">{f["ID Temuan"]}</td>
+                            <td className="p-3 font-semibold">{f.Outlet}</td>
+                            <td className="p-3"><span className="text-[9px] bg-slate-100 text-slate-600 px-1 py-0.2 block w-max mb-1 rounded font-bold">{f["Jenis Audit"]}</span>{f["Deskripsi Temuan"]}</td>
+                            <td className="p-3"><p className="font-bold">{f.PIC}</p><p className="text-[10px] text-slate-400">Limit: {f.Deadline}</p></td>
+                            <td className="p-3 text-center">
+                              <select value={f.Status} onChange={e=>updateFindingStatus(f["ID Temuan"], e.target.value)} className="p-1 border rounded font-bold">
+                                <option value="Open">⏳ Open</option><option value="Progress">🔄 Progress</option><option value="Closed">✅ Closed</option>
+                              </select>
+                            </td>
+                            <td className="p-3 text-center"><button onClick={() => openFollowupModal(f)} className="px-2 py-1 bg-slate-100 border text-slate-700 font-bold rounded-lg"><i className="fa-solid fa-bars-progress"></i></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'lhp' && (
+                <div className="space-y-4 text-xs">
+                  <div className="bg-white p-4 rounded-2xl border shadow-sm flex flex-wrap gap-2 items-center justify-between print-hide">
+                    <div className="flex gap-2">
+                      <select value={selectedLhpOutlet} onChange={e=>setSelectedLhpOutlet(e.target.value)} className="p-2 border rounded-xl">{(appData.MasterOutlets||[]).map(o=><option key={o.ID} value={o["Nama Outlet"]}>{o["Nama Outlet"]}</option>)}</select>
+                      <input type="date" value={lhpStartDate} onChange={e=>setLhpStartDate(e.target.value)} className="p-2 border rounded-xl" />
+                      <input type="date" value={lhpEndDate} onChange={e=>setLhpEndDate(e.target.value)} className="p-2 border rounded-xl" />
+                    </div>
+                    <button onClick={triggerPrint} className="px-4 py-2 bg-slate-900 text-white font-bold rounded-xl"><i className="fa-solid fa-print mr-2"></i>Cetak LHP Dokumen</button>
+                  </div>
+                  <div className="bg-white p-12 rounded-2xl border shadow-md max-w-4xl mx-auto print:p-0 print:border-0 print:shadow-none">
+                    <div className="text-center mb-6 border-b pb-4"><h2 className="text-xl font-black text-slate-900 uppercase">Laporan Hasil Pemeriksaan (LHP)</h2><p className="text-slate-400 font-bold uppercase tracking-widest text-[9px] mt-0.5">Internal Audit Division</p></div>
+                    <div className="mb-6 grid grid-cols-2 gap-4">
+                      <div><p className="text-slate-400">Target Lokasi Entitas:</p><p className="font-black text-slate-800">{selectedLhpOutlet}</p></div>
+                      <div><p className="text-slate-400">Rentang Waktu:</p><p className="font-bold text-slate-800">{lhpDateRangeLabel}</p></div>
+                    </div>
+                    <table className="w-full text-left border">
+                      <thead className="bg-slate-900 text-white font-bold uppercase text-[9px]"><tr><th className="p-2">No</th><th className="p-2">Ruang Lingkup</th><th className="p-2">Uraian Temuan Penyimpangan</th><th className="p-2 text-center">Status</th></tr></thead>
+                      <tbody>
+                        {filteredLhpFindings.map((item, idx) => (
+                          <tr key={item["ID Temuan"]} className="border-b"><td className="p-2 font-bold">{idx+1}</td><td className="p-2 font-bold text-slate-600">{item["Jenis Audit"]}</td><td className="p-2">{item["Deskripsi Temuan"]}</td><td className="p-2 text-center font-bold">{item.Status}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'lpj' && (
+                <div className="space-y-5 text-xs">
+                  <div className="bg-white p-4 rounded-2xl border shadow-sm flex flex-wrap items-center justify-between gap-3 print-hide">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-400">Periode Mingguan:</span>
+                      <input type="date" value={lpjStartDate} onChange={e=>setLpjStartDate(e.target.value)} className="p-2 border rounded-xl" />
+                      <span className="text-slate-400">s.d</span>
+                      <input type="date" value={lpjEndDate} onChange={e=>setLpjEndDate(e.target.value)} className="p-2 border rounded-xl" />
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={generateWeeklyReport} className="px-4 py-2 bg-slate-900 text-white font-bold rounded-xl"><i className="fa-solid fa-gears mr-1.5"></i>Kompilasi Data</button>
+                      {generatedLpj && (
+                        <>
+                          <button onClick={exportWeeklyLpjExcel} className="px-4 py-2 bg-green-600 text-white font-bold rounded-xl"><i className="fa-solid fa-file-excel mr-1.5"></i>Ekspor Excel</button>
+                          <button onClick={triggerPrint} className="px-4 py-2 bg-slate-100 border font-bold text-slate-700 rounded-xl"><i className="fa-solid fa-print mr-1.5"></i>PDF</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {generatedLpj && (
+                    <div className="bg-white p-8 rounded-2xl border shadow-xl max-w-4xl mx-auto print:p-0 print:border-0 print:shadow-none">
+                      <div className="text-center mb-8 border-b-2 border-slate-900 pb-3">
+                        <h2 className="text-lg font-black text-slate-900 uppercase">LAPORAN PERTANGGUNGJAWABAN (LPJ) AUDIT MINGGUAN</h2>
+                        <p className="text-slate-500 font-bold uppercase text-[10px] mt-0.5">Konsolidasi Masalah Tingkat Manajemen | Periode: {generatedLpj.periode}</p>
+                      </div>
+
+                      <div className="mb-6">
+                        <h4 className="font-extrabold text-[11px] text-slate-900 uppercase border-l-4 border-greenAccent pl-2 mb-3">I. RINGKASAN CAPAIAN KEPATUHAN (SUMMARY)</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                          <div className="p-3 bg-slate-50 border rounded-xl"><span className="text-[9px] text-slate-400 block font-bold uppercase">Entitas Dieudit</span><span className="text-lg font-black">{generatedLpj.summary.totalAudit} Cabang</span></div>
+                          <div className="p-3 bg-slate-50 border rounded-xl"><span className="text-[9px] text-slate-400 block font-bold uppercase">Total Pelanggaran</span><span className="text-lg font-black">{generatedLpj.summary.totalFindings} Kasus</span></div>
+                          <div className="p-3 bg-slate-50 border rounded-xl"><span className="text-[9px] text-slate-400 block font-bold uppercase">Open Critical</span><span className="text-lg font-black text-red-500">{generatedLpj.summary.open} Case</span></div>
+                          <div className="p-3 bg-slate-900 text-white rounded-xl"><span className="text-[9px] text-slate-400 block font-bold uppercase">Rasio Penutupan</span><span className="text-lg font-black text-greenAccent">{generatedLpj.summary.closingRate}%</span></div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <h4 className="font-extrabold text-[11px] text-slate-900 uppercase border-l-4 border-greenAccent pl-2 mb-3">II. MATRIKS RINCIAN TEMUAN BERDASARKAN CABANG OUTLET</h4>
+                        <div className="border rounded-xl overflow-hidden">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-slate-900 text-white text-[10px] font-bold uppercase">
+                                <th className="p-3 w-1/4 border-r border-slate-700">Nama Cabang Outlet</th>
+                                <th className="p-3">Rincian Data Pelanggaran Lapangan</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.keys(lpjGroupedData).map(outletName => {
+                                const findingsList = lpjGroupedData[outletName] || [];
+                                if (findingsList.length === 0) return null;
+
+                                return (
+                                  <tr key={outletName} className="border-b last:border-0">
+                                    <td className="p-4 font-black text-slate-900 bg-slate-50/50 align-top border-r text-center text-xs uppercase tracking-wide">
+                                      <div className="sticky top-20">
+                                        <i className="fa-solid fa-store text-indigo-600 mr-1.5"></i>
+                                        {outletName}
+                                        <span className="block text-[9px] text-slate-400 font-bold mt-1 uppercase">({findingsList.length} Temuan)</span>
+                                      </div>
+                                    </td>
+                                    <td className="p-0">
+                                      <table className="w-full text-left text-[11px] divide-y">
+                                        <thead>
+                                          <tr className="bg-slate-100 text-[9px] text-slate-500 font-bold uppercase">
+                                            <th className="p-2">Tanggal</th>
+                                            <th className="p-2">Ruang Lingkup</th>
+                                            <th className="p-2">Deskripsi Temuan</th>
+                                            <th className="p-2">Action Plan Perbaikan</th>
+                                            <th className="p-2 text-center">Status</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y bg-white">
+                                          {findingsList.map(f => (
+                                            <tr key={f.id} className="hover:bg-slate-50/60">
+                                              <td className="p-2 text-slate-500 whitespace-nowrap">{f.tanggal}</td>
+                                              <td className="p-2 font-bold text-indigo-600">{f.ruangLingkup}</td>
+                                              <td className="p-2 text-slate-700 font-medium">{f.deskripsi}</td>
+                                              <td className="p-2 text-slate-600 italic bg-slate-50/30">{f.actionPlan}</td>
+                                              <td className="p-2 text-center"><span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${f.status==='Closed'?'bg-green-50 text-green-700 border border-green-200':'bg-rose-50 text-rose-700 border border-rose-200'}`}>{f.status}</span></td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'history' && (
+                <div className="bg-white p-4 rounded-2xl border p-4 text-xs">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
+                    <input type="text" placeholder="Cari log..." value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} className="p-1.5 border rounded-lg w-64" />
+                    <button onClick={clearAllExportHistory} className="px-4 py-2 bg-red-600 text-white font-bold rounded-xl"><i className="fa-solid fa-trash-can mr-1.5"></i>Bersihkan Log</button>
+                  </div>
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b text-slate-400 font-bold uppercase"><tr><th className="p-2">Waktu</th><th className="p-2">Metode</th><th className="p-2">Rincian Aktivitas</th><th className="p-2">Operator</th></tr></thead>
+                    <tbody>
+                      {filteredHistoryLogs.map(log => (
+                        <tr key={log.id} className="border-b"><td className="p-2 font-mono">{log.timestamp}</td><td className="p-2"><span className="px-1.5 py-0.2 bg-indigo-50 text-indigo-600 font-bold rounded">{log.type}</span></td><td className="p-2">{log.details}</td><td className="p-2 font-bold">{log.operator}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </main>
+          </div>
+
+          {selectedFollowup && (
+            <div className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-4 backdrop-blur-sm">
+              <div className="bg-white rounded-2xl max-w-md w-full border shadow-2xl text-xs overflow-hidden">
+                <div className="px-4 py-2 bg-slate-900 text-white font-bold flex justify-between items-center"><span>Response Update Case: {selectedFollowup["ID Temuan"]}</span><button onClick={()=>setSelectedFollowup(null)}>×</button></div>
+                <form onSubmit={handleFollowupSubmit} className="p-4 space-y-3">
+                  <div><label className="block mb-1 text-slate-400">Action Plan Penanggulangan</label><textarea required value={followupForm.actionPlan} onChange={e=>setFollowupForm({...followupForm, actionPlan:e.target.value})} className="w-full p-2 border" /></div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="block mb-1 text-slate-400">Progress ({followupForm.progress}%)</label><input type="range" min="0" max="100" step="10" value={followupForm.progress} onChange={e=>setFollowupForm({...followupForm, progress:parseInt(e.target.value)})} className="w-full" /></div>
+                    <div><label className="block mb-1 text-slate-400">Verifikasi Koordinator</label><select value={followupForm.statusVerifikasi} onChange={e=>setFollowupForm({...followupForm, statusVerifikasi:e.target.value})} className="w-full p-1.5 border font-bold"><option value="Pending">⏱️ Pending</option><option value="Verified">✅ Verified</option></select></div>
+                  </div>
+                  <button type="submit" className="w-full py-2 bg-indigo-600 text-white font-bold rounded-xl">Kirim Berkas Tindakan</button>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<ErrorBoundary><App /></ErrorBoundary>);
+  </script>
+</body>
+</html>
